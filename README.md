@@ -1,6 +1,6 @@
 # Final Project for CS335 - Intro to Computer Graphics
 
-This project demonstrates basic concepts of computer graphics using THREE.js library
+This project demonstrates basic concepts of computer graphics using THREE.js library.
 
 ## Keybindings
 ### Esc

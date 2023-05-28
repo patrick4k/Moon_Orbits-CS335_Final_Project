@@ -1,0 +1,423 @@
+<!--
+Final Exam - A THREE.js Scene that demonstrates computer graphic topics covered in CS335
+Author: Patrick Kennedy
+Date: 5/3/23
+-->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CS335 Final Exam</title>
+    <style type="text/css">
+        html, body {margin: 0; padding: 0; overflow: hidden}
+    </style>
+</head>
+<body>
+<div id="webgl"></div>
+<script src="./lib/three.js"></script>
+<script>
+    'use strict';
+
+    // Frames per second
+    const FPS = 60;
+
+    // Global container for different render task
+    const onRenderList = [];
+
+    // Camera
+    let is_in_pov = true;
+    let pov_camera;
+    let outer_camera;
+    let outer_camera_target = 0;
+    const outer_camera_settings = [];
+    outer_camera_settings.push({zoom:1, getLookAt: () => new THREE.Vector3(0,0,0)}); // Default look config
+    onRenderList.push(() => {
+        // Look at current target
+        outer_camera.lookAt(
+            outer_camera_settings[outer_camera_target % outer_camera_settings.length].getLookAt()
+        );
+    });
+
+    // Light Containers
+    const spotlights = [];
+    const directional_lights = [];
+    const point_lights = [];
+    const ambient_lights = [];
+
+    // World Settings
+    const moon_radius = 15;
+    const moon_texture_location = './moon.png';
+    const stars_texture_location = './stars.png';
+    const default_ambient_intensity = 0.2;
+    const default_sun_intensity = 1;
+    const num_random_sat = 10;
+    const num_random_ufo = 10;
+
+    // THREE util
+    const scene = new THREE.Scene();
+    let moon = new THREE.Group();
+    const texture_loader = new THREE.TextureLoader();
+
+    function init() {
+
+        /* Create renderer */
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor('rgb(30, 10, 30)');
+        document.getElementById('webgl').appendChild(renderer.domElement);
+
+        /* Create Camera */
+        // Outer camera
+        outer_camera = new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,1,1000);
+        outer_camera.rotateY(Math.PI/2);
+        outer_camera.position.x += 4*moon_radius;
+
+        // POV camera
+        pov_camera = new THREE.PerspectiveCamera(50,window.innerWidth/window.innerHeight,1,1000);
+        pov_camera.rotateX(-4*Math.PI/180);
+        pov_camera.position.y += 0.75;
+        pov_camera.position.z += 3;
+
+        // Attach pov camera to new UFO
+        const cam_orbit = getOrbiter(0.5, new THREE.Vector3(-1,0,0), 50);
+        const cam_ufo = getUFO(0.2, [0.5, 0.5, 0.5]);
+        cam_orbit.add(cam_ufo);
+        cam_orbit.add(pov_camera);
+
+        /* Load stars */
+        texture_loader.load(
+            stars_texture_location,
+            (texture) => scene.background = texture
+        );
+
+        /* Add moon */
+        const onTextureLoad = (texture) => {
+            const moon_geo = new THREE.SphereGeometry(moon_radius, 2*64, 2*32);
+            const moon_mat = new THREE.MeshPhongMaterial({map: texture});
+            moon = new THREE.Mesh(moon_geo, moon_mat);
+            moon.name = 'moon';
+            scene.add(moon);
+        };
+        texture_loader.load(
+            moon_texture_location,
+            onTextureLoad,
+            undefined,
+            () => console.log('Could not load ' + moon_texture_location)
+        );
+
+        /* Low level ambient light */
+        const ambient = new THREE.AmbientLight(0xffffff, default_ambient_intensity);
+        scene.add(ambient);
+        ambient_lights.push(ambient);
+
+        /* Add Sat and UFO orbiters */
+        for (let i = 0; i < num_random_sat; i++) addRandomOrbitingSat();
+        for (let i = 0; i < num_random_ufo; i++) addRandomOrbitingUFO();
+
+        const sun = new THREE.DirectionalLight(0xffd580, default_sun_intensity);
+        const sun_orbiter = getOrbiter(1000, new THREE.Vector3(1,1,0), 10, false);
+        sun_orbiter.add(sun);
+        directional_lights.push(sun);
+
+        /* Render with FPS */
+        function render() {
+            // Do render task
+            for (const onRender of onRenderList) onRender();
+
+            // Draw scene
+            renderer.render(scene, is_in_pov? pov_camera: outer_camera);
+
+            // Wait until next frame to execute
+            setTimeout(
+                () => requestAnimationFrame(render),
+                1000/FPS
+            );
+        }
+
+        render();
+        setControls();
+    }
+
+    function rotateAroundMoon(obj, axis, theta) {
+        obj.position.applyAxisAngle(axis, theta*Math.PI/180);
+        obj.rotateOnAxis(axis, theta*Math.PI/180);
+    }
+
+    /* Controls ----------------------------------------------------------------------------------------------------- */
+
+    function update_camera() {
+        outer_camera.zoom = outer_camera_settings[outer_camera_target % outer_camera_settings.length].zoom;
+        outer_camera.updateProjectionMatrix();
+    }
+
+    function setControls() {
+        const step = 5;
+        window.onkeydown = (ev) => {
+            switch (ev.code) {
+
+                /* Toggle Camera */
+                case 'Escape':
+                    is_in_pov = !is_in_pov;
+                    break;
+
+                /* Outer Camera Movement */
+                case 'KeyA': // Left
+                    outer_camera.position.z += step;
+                    break;
+                case 'KeyD': // Right
+                    outer_camera.position.z -= step;
+                    break;
+                case 'KeyW': // Forward
+                    outer_camera.position.x -= step;
+                    break;
+                case 'KeyS': // Backward
+                    outer_camera.position.x += step;
+                    break;
+                case 'KeyK': // Up
+                    outer_camera.position.y += step;
+                    break;
+                case 'KeyJ': // Down
+                    outer_camera.position.y -= step;
+                    break;
+
+                /* Outer Camera Target */
+                case 'ArrowRight': // Next Target
+                    outer_camera_target++;
+                    update_camera();
+                    break;
+                case 'ArrowLeft': // Previous Target
+                    outer_camera_target--;
+                    if (outer_camera_target < 0)
+                        outer_camera_target = outer_camera_settings.length-1;
+                    update_camera();
+                    break;
+
+                /* Outer Camera Zoom */
+                case 'ArrowUp': // Zoom in
+                    outer_camera_settings[outer_camera_target % outer_camera_settings.length].zoom *= 2;
+                    update_camera();
+                    break;
+                case 'ArrowDown': // Zoom out
+                    outer_camera_settings[outer_camera_target % outer_camera_settings.length].zoom /= 2;
+                    update_camera();
+                    break;
+
+                /* Toggle Lights */
+                case 'Digit1': // Ambient Light
+                    for (const light of ambient_lights)
+                        light.visible = !light.visible;
+                    break;
+                case 'Digit2': // Point Lights
+                    for (const light of point_lights)
+                        light.visible = !light.visible;
+                    break;
+                case 'Digit3': // Directional Lights
+                    for (const light of directional_lights)
+                        light.visible = !light.visible;
+                    break;
+                case 'Digit4': // Spotlights
+                    for (const light of spotlights)
+                        light.visible = !light.visible;
+                    break;
+            }
+        };
+    }
+
+
+    /* Object Generation Methods ------------------------------------------------------------------------------------ */
+
+    function getOrbiter(altitude, axis, angular_velocity, should_add_to_target_list = true) {
+
+        const orbiter = new THREE.Group();
+        scene.add(orbiter);
+
+        orbiter.name= 'orbiter';
+        orbiter.altitude = altitude;
+        orbiter.axis_of_rotation = axis;
+        orbiter.angular_velocity = angular_velocity;
+
+        orbiter.position.y += moon_radius + altitude;
+
+        let delta_theta = angular_velocity/FPS;
+        onRenderList.push(() => {
+            rotateAroundMoon(orbiter, axis, delta_theta);
+        });
+
+        // Add to outer camera settings
+        // This allows for the outer camera to toggle its look-at position to this orbiter
+        if (should_add_to_target_list) {
+            outer_camera_settings.push(
+                {
+                    getLookAt: () => orbiter.position,
+                    zoom: 10
+                }
+            );
+        }
+
+        return orbiter;
+    }
+
+    function addRandomOrbitingUFO() {
+
+        // Generate Random Orbit
+        const altitude = randomBetween(1, 5);
+        let angular_velocity = randomBetween(40, 75);
+        if (randomBetween(0,1) >= 0.5) angular_velocity *= -1;
+        const axis = new THREE.Vector3(
+            randomBetween(-1,1),
+            randomBetween(-1,1),
+            randomBetween(-1,1)
+        ).normalize();
+        const orbit = getOrbiter(altitude,axis,angular_velocity);
+
+        // Generate random UFO
+        const radius = randomBetween(0.1, 0.3);
+        const ufo = getUFO(radius);
+
+        orbit.add(ufo);
+        return orbit;
+    }
+
+    function addRandomOrbitingSat() {
+
+        // Generate Random Orbit
+        const altitude = randomBetween(15, 25);
+        let angular_velocity = randomBetween(10, 60);
+        if (randomBetween(0,1) >= 0.5) angular_velocity *= -1;
+        const axis = new THREE.Vector3(
+            randomBetween(-1,1),
+            randomBetween(-1,1),
+            randomBetween(-1,1)
+        ).normalize();
+        const orbit = getOrbiter(altitude,axis,angular_velocity);
+
+        // Generate random Sat
+        const width = randomBetween(0.25, 0.5);
+        const sat = getSat(width);
+
+        orbit.add(sat);
+        return orbit;
+    }
+
+    function getSat(width) {
+        const sat = new THREE.Group();
+
+        // Body
+        const body_geo = new THREE.BoxGeometry(width, width, width);
+        const body_mat = new THREE.MeshPhongMaterial({color: new THREE.Color(0.1,0.1,0.1)});
+        const body = new THREE.Mesh(body_geo, body_mat);
+        sat.add(body);
+
+        // Arm
+        const arm_geo = new THREE.BoxGeometry(0.1*width, 0.1*width, 3*width);
+        const arm_mat = new THREE.MeshPhongMaterial({color: new THREE.Color(0,0,0)});
+        const arm = new THREE.Mesh(arm_geo, arm_mat);
+        sat.add(arm);
+
+        // Lights
+        const intensity = 10;
+        const right_light = new THREE.PointLight(0xff0000, intensity, 2*width); // red
+        const left_light = new THREE.PointLight(0x00ff00, intensity, 2*width); // green
+        left_light.position.z -= 1.5*width;
+        right_light.position.z += 1.5*width;
+        sat.add(left_light);
+        sat.add(right_light);
+        point_lights.push(right_light);
+        point_lights.push(left_light);
+
+        // Add timeout to flicker lights
+        const wait_sec = 3, flicker_sec = 1;
+        const flicker_lights = () => {
+            for (const light of [right_light, left_light]) {
+                light.intensity = 0;
+                setTimeout(() => {
+                    light.intensity = intensity;
+                }, flicker_sec*1000);
+            }
+            setTimeout(flicker_lights, wait_sec*1000);
+        };
+        setTimeout(flicker_lights, randomBetween(1, 5)*1000);
+
+
+        // Panels
+        const panelGeo = new THREE.PlaneGeometry(1.5*width,1.1*width);
+        const panelMat = new THREE.MeshPhongMaterial({
+            color: new THREE.Color(0.01,0.01,0.01),
+            side: THREE.DoubleSide
+        });
+        const right_panel = new THREE.Mesh(panelGeo, panelMat);
+        const left_panel = new THREE.Mesh(panelGeo, panelMat);
+        right_panel.position.z += 1.5*width;
+        left_panel.position.z -= 1.5*width;
+        right_panel.rotation.y += Math.PI/2;
+        left_panel.rotation.y += Math.PI/2;
+        sat.add(right_panel);
+        sat.add(left_panel);
+
+        // Panel Rotation
+        const left_angular_velocity = -randomBetween(30, 60)*Math.PI/180;
+        const right_angular_velocity = randomBetween(30, 60)*Math.PI/180;
+        onRenderList.push(() => {
+            left_panel.rotateX(left_angular_velocity/FPS);
+            right_panel.rotateX(right_angular_velocity/FPS);
+        });
+
+        return sat;
+    }
+
+    function getUFO(radius, color = [Math.random()/4,Math.random()/4,Math.random()/4]) {
+        const ufo = new THREE.Group();
+
+        // Add Body
+        const body_geo = new THREE.SphereGeometry(radius, 32, 16, 0, 2*Math.PI, 0, Math.PI/2);
+        const body_mat = new THREE.MeshPhongMaterial(
+            {
+                color: new THREE.Color(...color),
+                side: THREE.DoubleSide
+            }
+        );
+        const body = new THREE.Mesh(body_geo, body_mat);
+        ufo.add(body);
+
+        // Add ring
+        const ring_geo = new THREE.RingGeometry(1.5*radius, 2*radius, 5, 1);
+        const ring_mat = new THREE.MeshPhongMaterial(
+            {
+                color: 'rgb(70,70,70)',
+                side: THREE.DoubleSide
+            }
+        );
+        const ring = new THREE.Mesh(ring_geo, ring_mat);
+        ring.rotation.x += Math.PI/2;
+        ufo.add(ring);
+
+        // Add bottom
+        const bottom_geo = new THREE.RingGeometry(0.1*radius, radius, 64, 1);
+        const bottom_mat = new THREE.MeshPhongMaterial({color: new THREE.Color(...color)});
+        const bottom = new THREE.Mesh(bottom_geo, bottom_mat);
+        bottom.rotation.x += Math.PI/2;
+        ufo.add(bottom);
+
+        // Add light
+        const light = new THREE.SpotLight(0xffffff, 1, 0, 8*Math.PI/180, 1);
+        ufo.add(light);
+        spotlights.push(light);
+
+        // Rotate ring
+        onRenderList.push(() => {
+            ring.rotateZ(5*Math.PI/180);
+        });
+
+        return ufo;
+    }
+
+    /* UTIL --------------------------------------------------------------------------------------------------------- */
+
+    function randomBetween(min, max) {
+        return Math.random() * (max - min) + min;
+    }
+
+    window.onload = init;
+
+</script>
+</body>
+</html>
